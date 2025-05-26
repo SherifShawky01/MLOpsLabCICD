@@ -7,51 +7,96 @@ on:
     branches: [ main ]
 
 env:
+  # Always-needed values
   AWS_REGION: us-east-1
   ECR_REPOSITORY: churn-prediction
   EC2_HOST: ${{ secrets.EC2_HOST }}
-  EC2_USERNAME: ec2-user
+  EC2_USERNAME: ${{ secrets.EC2_USERNAME }}
+
+  # Set this repo variable to 'true' for CI-only runs with dummy keys
+  # → Settings ▸ Actions ▸ Variables ▸ New variable: DRY_RUN=true
+  DRY_RUN: ${{ vars.DRY_RUN }}
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v2
+    # ─────────────────────────────────────────────────────────────
+    # 1. Source code
+    # ─────────────────────────────────────────────────────────────
+    - uses: actions/checkout@v4
 
-    - name: Set up Python
-      uses: actions/setup-python@v2
+    # ─────────────────────────────────────────────────────────────
+    # 2. Python + deps + (optional) tests
+    # ─────────────────────────────────────────────────────────────
+    - name: Set up Python 3.8
+      uses: actions/setup-python@v5
       with:
-        python-version: '3.8'
+        python-version: "3.8"
 
-    - name: Install dependencies and run tests
+    - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
-        
+        # Uncomment when you add tests:
+        # python -m pytest tests/
 
-     - name: Configure AWS credentials
-        if: env.DRY_RUN != 'true'     # ← only run with real keys
-        uses: aws-actions/configure-aws-credentials@v1
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
+    # ─────────────────────────────────────────────────────────────
+    # 3. AWS credentials (skips in DRY_RUN)
+    # ─────────────────────────────────────────────────────────────
+    - name: Configure AWS credentials
+      if: env.DRY_RUN != 'true'
+      uses: aws-actions/configure-aws-credentials@v1
+      with:
+        aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region:            ${{ env.AWS_REGION }}
 
-      - name: Login to Amazon ECR
-        if: env.DRY_RUN != 'true'
-        uses: aws-actions/amazon-ecr-login@v1
+    # ─────────────────────────────────────────────────────────────
+    # 4. ECR login (skips in DRY_RUN)
+    # ─────────────────────────────────────────────────────────────
+    - name: Login to Amazon ECR
+      if: env.DRY_RUN != 'true'
+      id: login-ecr
+      uses: aws-actions/amazon-ecr-login@v1
 
-      - name: Deploy to EC2
-        if: env.DRY_RUN != 'true'
-        uses: appleboy/ssh-action@master
-        with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USERNAME }}
-          key: ${{ secrets.EC2_SSH_KEY }}
+    # ─────────────────────────────────────────────────────────────
+    # 5. Build Docker image (always runs)
+    # ─────────────────────────────────────────────────────────────
+    - name: Build Docker image
+      run: |
+        IMAGE_TAG=${{ github.actor }}_${{ github.run_number }}
+        docker build -t local/$ECR_REPOSITORY:$IMAGE_TAG ./app
+        echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_ENV
+
+    # ─────────────────────────────────────────────────────────────
+    # 6. Push to ECR (skips in DRY_RUN)
+    # ─────────────────────────────────────────────────────────────
+    - name: Push Docker image to ECR
+      if: env.DRY_RUN != 'true'
+      env:
+        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+      run: |
+        docker tag local/$ECR_REPOSITORY:$IMAGE_TAG \
+                   $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+        docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+
+    # ─────────────────────────────────────────────────────────────
+    # 7. Pull + run on EC2 (skips in DRY_RUN)
+    # ─────────────────────────────────────────────────────────────
+    - name: Deploy to EC2
+      if: env.DRY_RUN != 'true'
+      uses: appleboy/ssh-action@master
+      with:
+        host:     ${{ env.EC2_HOST }}
+        username: ${{ env.EC2_USERNAME }}
+        key:      ${{ secrets.EC2_SSH_KEY }}
         script: |
           cd MLOps-Course-Labs
           git pull
-          aws ecr get-login-password --region ${{ env.AWS_REGION }} | docker login --username AWS --password-stdin ${{ steps.login-ecr.outputs.registry }}
+          aws ecr get-login-password --region ${{ env.AWS_REGION }} \
+            | docker login --username AWS --password-stdin \
+              ${{ steps.login-ecr.outputs.registry }}
           docker-compose pull
           docker-compose up -d
