@@ -4,4 +4,4 @@ scikit-learn
 numpy
 pandas
 matplotlib
-
+pytest>=7.4
