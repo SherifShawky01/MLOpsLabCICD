@@ -15,7 +15,7 @@ model = joblib.load(MODEL_PATH)
 logger.info("Random Forest model loaded successfully.")
 from joblib import load
 
-MODEL_PATH = r"D:\Python Labs ITI\mlops\MLOps-Course-Labs\churn_prediction\model.pkl"
+MODEL_PATH = r"model.pkl"
 
 def load_model():
     """
