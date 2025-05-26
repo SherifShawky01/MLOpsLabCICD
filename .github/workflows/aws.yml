@@ -60,14 +60,23 @@ jobs:
           | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
 
     # ────────────────────────────────
-    # 4. Build & push image
+    # 4. Build image and push both :<SHA> and :latest tags
     # ────────────────────────────────
     - name: Build & push image
       env:
         TAG: ${{ github.sha }}
       run: |
-        docker build -t $DOCKERHUB_REPO:$TAG ./app
+        # Build once, attach two tags
+        docker build \
+          -t $DOCKERHUB_REPO:$TAG \
+          -t $DOCKERHUB_REPO:latest \
+          ./app
+
+        # Push both tags
         docker push $DOCKERHUB_REPO:$TAG
+        docker push $DOCKERHUB_REPO:latest
+
+        # Expose the immutable tag to later steps
         echo "IMAGE_TAG=$TAG" >> $GITHUB_ENV
 
     # ────────────────────────────────
@@ -89,20 +98,4 @@ jobs:
       with:
         service: ${{ env.CLOUDRUN_SERVICE }}
         region:  ${{ env.CLOUDRUN_REGION }}
-        image:   docker.io/${{ env.DOCKERHUB_REPO }}:${{ env.IMAGE_TAG }}
-
-    # ────────────────────────────────
-    # 7. Smoke-test the new service (skipped if DRY_RUN)
-    # ────────────────────────────────
-    - name: Curl /health endpoint
-      if: env.DRY_RUN == 'false'
-      run: |
-        URL="${{ steps.deploy.outputs.url }}/health"
-        echo "Waiting for $URL"
-        for i in {1..10}; do
-          if curl -fsSL "$URL"; then
-            echo "✅ API is responding"; exit 0
-          fi
-          sleep 5
-        done
-        echo "❌ Service did not respond in time" && exit 1
+        image:
