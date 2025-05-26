@@ -1,93 +1,100 @@
-name: Deploy to AWS EC2
-
+name: CI-CD | Build & (optional) Deploy to EC2
+# ──────────────────────────────────────────────────────────────
 on:
   push:
     branches: [ main ]
   pull_request:
     branches: [ main ]
 
+# ───────────────────────────
+# Global environment vars
+# ───────────────────────────
 env:
-  AWS_REGION: us-east-1
-  ECR_REPOSITORY: churn-prediction
+  AWS_REGION:      us-east-1
+  ECR_REPOSITORY:  churn-prediction
 
-  # Automatically enter dry-run mode if the key is blank or asterisks
-  DRY_RUN: ${{ (secrets.AWS_ACCESS_KEY_ID == '') || startsWith(secrets.AWS_ACCESS_KEY_ID, '***') }}
-
+  # -----------------------------------------------------------
+  # DRY_RUN controls whether the job touches AWS at all.
+  # • Leave it at the default "true" → CI builds & tests only.
+  # • Set a repo/Org VARIABLE named DRY_RUN to "false"
+  #   AND save real AWS_* secrets  → full deploy is executed.
+  # -----------------------------------------------------------
+  DRY_RUN:         ${{ vars.DRY_RUN || 'true' }}
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
 
     steps:
-    # ─────────────────────────────────────────────────────────────
-    # 1. Source code
-    # ─────────────────────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────
+    # 1  Check-out source
+    # ─────────────────────────────────────────────────────────
     - uses: actions/checkout@v4
 
-    # ─────────────────────────────────────────────────────────────
-    # 2. Python + deps + (optional) tests
-    # ─────────────────────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────
+    # 2  Python setup + deps (+ optional tests)
+    # ─────────────────────────────────────────────────────────
     - name: Set up Python 3.8
       uses: actions/setup-python@v5
       with:
-        python-version: "3.8"
+        python-version: '3.8'
 
-    - name: Install dependencies
+    - name: Install dependencies & run tests
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
-        # Uncomment when you add tests:
+        # ▶ Uncomment when you add tests
         # python -m pytest tests/
 
-    # ─────────────────────────────────────────────────────────────
-    # 3. AWS credentials (skips in DRY_RUN)
-    # ─────────────────────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────
+    # 3  AWS creds – runs only when DRY_RUN == false
+    # ─────────────────────────────────────────────────────────
     - name: Configure AWS credentials
-      if: env.DRY_RUN != 'true'
+      if: env.DRY_RUN == 'false'
       uses: aws-actions/configure-aws-credentials@v1
       with:
         aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         aws-region:            ${{ env.AWS_REGION }}
 
-    # ─────────────────────────────────────────────────────────────
-    # 4. ECR login (skips in DRY_RUN)
-    # ─────────────────────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────
+    # 4  Login to ECR (guarded)
+    # ─────────────────────────────────────────────────────────
     - name: Login to Amazon ECR
-      if: env.DRY_RUN != 'true'
+      if: env.DRY_RUN == 'false'
       id: login-ecr
       uses: aws-actions/amazon-ecr-login@v1
 
-    # ─────────────────────────────────────────────────────────────
-    # 5. Build Docker image (always runs)
-    # ─────────────────────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────
+    # 5  Build Docker image (always runs)
+    # ─────────────────────────────────────────────────────────
     - name: Build Docker image
       run: |
         IMAGE_TAG=${{ github.actor }}_${{ github.run_number }}
-        docker build -t local/$ECR_REPOSITORY:$IMAGE_TAG ./app
-        echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_ENV
+        docker build -t local/${ECR_REPOSITORY}:${IMAGE_TAG} ./app
+        echo "IMAGE_TAG=${IMAGE_TAG}" >> $GITHUB_ENV
 
-    # ─────────────────────────────────────────────────────────────
-    # 6. Push to ECR (skips in DRY_RUN)
-    # ─────────────────────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────
+    # 6  Push image to ECR (guarded)
+    # ─────────────────────────────────────────────────────────
     - name: Push Docker image to ECR
-      if: env.DRY_RUN != 'true'
+      if: env.DRY_RUN == 'false'
       env:
         ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
       run: |
-        docker tag local/$ECR_REPOSITORY:$IMAGE_TAG \
-                   $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-        docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+        docker tag local/${ECR_REPOSITORY}:${IMAGE_TAG} \
+                   ${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}
+        docker push ${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}
 
-    # ─────────────────────────────────────────────────────────────
-    # 7. Pull + run on EC2 (skips in DRY_RUN)
-    # ─────────────────────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────
+    # 7  SSH into EC2 & deploy (guarded)
+    # ─────────────────────────────────────────────────────────
     - name: Deploy to EC2
-      if: env.DRY_RUN != 'true'
+      if: env.DRY_RUN == 'false'
       uses: appleboy/ssh-action@master
       with:
-        host:     ${{ env.EC2_HOST }}
-        username: ${{ env.EC2_USERNAME }}
+        host:     ${{ secrets.EC2_HOST }}
+        username: ${{ secrets.EC2_USERNAME }}
         key:      ${{ secrets.EC2_SSH_KEY }}
         script: |
           cd MLOps-Course-Labs
