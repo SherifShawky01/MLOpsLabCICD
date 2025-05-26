@@ -10,12 +10,20 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Load the pre-trained Random Forest model
-MODEL_PATH = r"model.pkl"
+# main.py  or  app/app.py
+from pathlib import Path
+import joblib, fastapi, os
+
+BASE_DIR = Path(__file__).resolve().parent
+MODEL_PATH = BASE_DIR / "model.pkl"        # absolute path
+model = joblib.load(MODEL_PATH)
+
+app = fastapi.FastAPI()
+# … routes …
+
 model = joblib.load(MODEL_PATH)
 logger.info("Random Forest model loaded successfully.")
 from joblib import load
-
-MODEL_PATH = r"model.pkl"
 
 def load_model():
     """
