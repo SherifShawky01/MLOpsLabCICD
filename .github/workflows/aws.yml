@@ -7,15 +7,12 @@ on:
     branches: [ main ]
 
 env:
-  # Always-needed values
   AWS_REGION: us-east-1
   ECR_REPOSITORY: churn-prediction
-  EC2_HOST: ${{ secrets.EC2_HOST }}
-  EC2_USERNAME: ${{ secrets.EC2_USERNAME }}
 
-  # Set this repo variable to 'true' for CI-only runs with dummy keys
-  # → Settings ▸ Actions ▸ Variables ▸ New variable: DRY_RUN=true
-  DRY_RUN: ${{ vars.DRY_RUN }}
+  # Automatically enter dry-run mode if the key is blank or asterisks
+  DRY_RUN: ${{ (secrets.AWS_ACCESS_KEY_ID == '') || startsWith(secrets.AWS_ACCESS_KEY_ID, '***') }}
+
 
 jobs:
   deploy:
